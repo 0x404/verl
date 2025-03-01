@@ -15,11 +15,7 @@
 
 def get_weight_loader(arch: str):
     from verl.models.llama.megatron.checkpoint_utils.llama_loader import load_state_dict_to_megatron_llama
-    from verl.models.qwen2.megatron.checkpoint_utils.qwen2_loader import load_state_dict_to_megatron_qwen2
-    _MODEL_WEIGHT_MEGATRON_LOADER_REGISTRY = {
-        'LlamaForCausalLM': load_state_dict_to_megatron_llama,
-        'Qwen2ForCausalLM': load_state_dict_to_megatron_qwen2,
-    }
+    _MODEL_WEIGHT_MEGATRON_LOADER_REGISTRY = {'LlamaForCausalLM': load_state_dict_to_megatron_llama}
 
     if arch in _MODEL_WEIGHT_MEGATRON_LOADER_REGISTRY:
         return _MODEL_WEIGHT_MEGATRON_LOADER_REGISTRY[arch]

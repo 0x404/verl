@@ -16,15 +16,20 @@ Megatron Reward Model.
 """
 
 from tensordict import TensorDict
+from functools import partial
 from verl import DataProto
+from verl.utils.torch_functional import logprobs_from_logits
+import torch
 import torch
 import torch.distributed
 
-from verl.utils.torch_functional import pad_sequence_to_length
+from verl.utils.torch_functional import get_eos_mask, pad_sequence_to_length
 from verl.utils.megatron.pipeline_parallel import (compute_transformers_input_shapes, make_batch_generator)
 from verl import DataProto
-from verl.utils.torch_functional import broadcast_dict_tensor, split_dict_tensor_into_batches
+from verl.utils.torch_functional import logprobs_from_logits, broadcast_dict_tensor, split_dict_tensor_into_batches
+from verl.utils.torch_dtypes import PrecisionType
 from verl.workers.reward_model.base import BasePPORewardModel
+from verl.utils.megatron import sequence_parallel as sp_utils
 from megatron.core import parallel_state as mpu
 from megatron.core.pipeline_parallel import get_forward_backward_func
 
@@ -77,6 +82,9 @@ class MegatronRewardModel(BasePPORewardModel):
             # workaround
             decode_with_rm_chat = decode_result.replace("<|user|>\n", "[INST] ").replace(
                 "</s>\n<|assistant|>\n", " [/INST]").replace("</s> \n<|assistant|>\n", " [/INST]") + "</s>"
+
+            print(f"decode_with_rm_chat: {decode_with_rm_chat}")
+            
             if print_decode and torch.distributed.get_rank() == 0:
                 # only print first decode result
                 print(f'device {torch.cuda.current_device()}: sft decode result:\n{decode_result}\n \
@@ -191,8 +199,8 @@ class MegatronRewardModel(BasePPORewardModel):
                               group=mpu.get_pipeline_model_parallel_group())
 
         # split into micro-batches
-        if self.config is not None and 'ppo_micro_batch_size_per_gpu' in self.config:
-            infer_batch_size = self.config.ppo_micro_batch_size_per_gpu
+        if self.config is not None and 'ppo_micro_batch_size' in self.config:
+            infer_batch_size = self.config.ppo_micro_batch_size
         else:
             infer_batch_size = data.batch.batch_size[0]
 
