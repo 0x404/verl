@@ -39,7 +39,10 @@ parser.add_argument(
     "--local_dir",
     type=str,
     required=True,
-    help="The path for your saved model. For megatron, point to the base dir of model, rng, optimizer checkpoints, commonly be `config.default_local_dir/global_step_\{global_step\}`.",
+    help=(
+        "The path for your saved model. For megatron, point to the base dir of model, rng, optimizer checkpoints, "
+        "commonly be `config.default_local_dir/global_step_\{global_step\}`.",
+    ),
 )
 parser.add_argument("--target_dir", required=False, default="tmp", type=str, help="The path for the target model")
 parser.add_argument("--hf_upload_path", default=False, type=str, help="The path of the huggingface repo to upload")
@@ -76,6 +79,45 @@ def upload_model_to_huggingface(hf_path):
     api = HfApi()
     api.create_repo(repo_id=args.hf_upload_path, private=False, exist_ok=True)
     api.upload_folder(folder_path=hf_path, repo_id=args.hf_upload_path, repo_type="model")
+
+
+def test_state_dict_compatibility(
+    auto_model_class,
+    original_hf_model_path: str,
+    collected_state_dict: Dict[str, torch.Tensor],
+) -> bool:
+    # load original model using bf16 since we collected state_dict with bf16
+    original_model = auto_model_class.from_pretrained(original_hf_model_path, torch_dtype=torch.bfloat16)
+    original_state_dict = original_model.state_dict()
+    del original_model  # Free memory
+
+    original_keys = set(original_state_dict.keys())
+    collected_keys = set(collected_state_dict.keys())
+
+    missing_keys = original_keys - collected_keys
+    assert len(missing_keys) == 0, f"Missing keys in collected state dict: {list(sorted(missing_keys))}"
+
+    extra_keys = collected_keys - original_keys
+    assert len(extra_keys) == 0, f"Extra keys in collected state dict: {list(sorted(extra_keys))}"
+
+    for key in original_keys:
+        original_shape = original_state_dict[key].shape
+        collected_shape = collected_state_dict[key].shape
+        assert original_shape == collected_shape, (
+            f"Shape mismatch for key '{key}': original {original_shape} vs collected {collected_shape}"
+        )
+
+        original_dtype = original_state_dict[key].dtype
+        collected_dtype = collected_state_dict[key].dtype
+        assert original_dtype == collected_dtype, (
+            f"Dtype mismatch for key '{key}': original {original_dtype} vs collected {collected_dtype}"
+        )
+
+    print(
+        f"Compatibility checks passed: "
+        f"The collected state dict matches the original model state dict in {original_hf_model_path}."
+    )
+    return True
 
 
 def convert_fsdp_checkpoints_to_hfmodels():
@@ -143,7 +185,7 @@ def convert_fsdp_checkpoints_to_hfmodels():
         for model_state_dict in model_state_dict_lst:
             try:
                 tensor = model_state_dict.pop(key)
-            except:
+            except Exception:
                 print("-" * 30)
                 print(model_state_dict)
             if isinstance(tensor, DTensor):
@@ -179,7 +221,6 @@ def convert_fsdp_checkpoints_to_hfmodels():
         else:
             state_dict[key] = torch.cat(state_dict[key], dim=0)
 
-    print("Writing to local disk")
     hf_path = os.path.join(local_dir, "huggingface") if args.target_dir is None else args.target_dir
     config = AutoConfig.from_pretrained(args.hf_model_path)
 
@@ -191,6 +232,10 @@ def convert_fsdp_checkpoints_to_hfmodels():
         auto_model = AutoModelForVision2Seq
     else:
         raise NotImplementedError(f"Unknown architecture {config['architectures']}")
+
+    if args.test:
+        print("Running compatibility test")
+        test_state_dict_compatibility(auto_model, args.hf_model_path, state_dict)
 
     with torch.device("meta"):
         model = auto_model.from_config(config, torch_dtype=torch.bfloat16)
