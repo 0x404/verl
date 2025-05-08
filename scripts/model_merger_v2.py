@@ -30,6 +30,7 @@ from verl.utils import hf_processor, hf_tokenizer
 
 @dataclass
 class ModelMergerConfig:
+    operation: str  # 'merge' or 'test'
     backend: str
     local_dir: str
     target_dir: Optional[str] = "tmp"
@@ -38,7 +39,6 @@ class ModelMergerConfig:
     test_hf_dir: Optional[str] = None
     tie_word_embedding: bool = False
     is_value_model: bool = False
-    operation: str  # 'merge' or 'test'
     hf_upload: bool = field(init=False)
 
     def __post_init__(self):
